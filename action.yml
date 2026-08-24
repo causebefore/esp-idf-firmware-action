@@ -1,0 +1,86 @@
+name: ESP-IDF Firmware Release
+description: Validate an ESP-IDF OTA package and publish immutable firmware assets to GitHub Releases.
+author: causebefore
+
+inputs:
+  token:
+    description: GitHub token with Contents write permission on the release repository.
+    required: true
+  repository:
+    description: Target release repository in owner/repo form.
+    required: true
+  firmware:
+    description: Path to the compiled application .bin file.
+    required: true
+  manifest:
+    description: Path to the OTA manifest JSON file.
+    required: true
+  target:
+    description: Branch or commit used as the release tag target.
+    required: false
+    default: main
+
+outputs:
+  tag:
+    description: Release tag derived from firmware_target and ota_version.
+    value: ${{ steps.package.outputs.tag }}
+  download-url:
+    description: Public URL of the firmware release asset.
+    value: ${{ steps.package.outputs.download-url }}
+  firmware-asset:
+    description: Packaged firmware asset path.
+    value: ${{ steps.package.outputs.firmware-asset }}
+  manifest-asset:
+    description: Packaged manifest asset path containing download_url.
+    value: ${{ steps.package.outputs.manifest-asset }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate and package firmware
+      id: package
+      shell: pwsh
+      env:
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_FIRMWARE: ${{ inputs.firmware }}
+        INPUT_MANIFEST: ${{ inputs.manifest }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $packageDirectory = Join-Path $env:RUNNER_TEMP ("esp-idf-firmware-release-" + [guid]::NewGuid().ToString("N"))
+        $json = & python "$env:GITHUB_ACTION_PATH/scripts/prepare_release.py" `
+          --repository $env:INPUT_REPOSITORY `
+          --firmware $env:INPUT_FIRMWARE `
+          --manifest $env:INPUT_MANIFEST `
+          --output-dir $packageDirectory
+        if ($LASTEXITCODE -ne 0) {
+          throw "Firmware package validation failed with exit code $LASTEXITCODE."
+        }
+        $package = $json | ConvertFrom-Json
+        "tag=$($package.tag)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "download-url=$($package.download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "firmware-asset=$($package.firmware_asset)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "manifest-asset=$($package.manifest_asset)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "release-title=$($package.release_title)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+    - name: Publish GitHub Release
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_TARGET: ${{ inputs.target }}
+        RELEASE_TAG: ${{ steps.package.outputs.tag }}
+        RELEASE_TITLE: ${{ steps.package.outputs.release-title }}
+        FIRMWARE_ASSET: ${{ steps.package.outputs.firmware-asset }}
+        MANIFEST_ASSET: ${{ steps.package.outputs.manifest-asset }}
+      run: |
+        & "$env:GITHUB_ACTION_PATH/scripts/publish_release.ps1" `
+          -Repository $env:INPUT_REPOSITORY `
+          -Target $env:INPUT_TARGET `
+          -Tag $env:RELEASE_TAG `
+          -Title $env:RELEASE_TITLE `
+          -FirmwarePath $env:FIRMWARE_ASSET `
+          -ManifestPath $env:MANIFEST_ASSET
+
+branding:
+  icon: package
+  color: blue
