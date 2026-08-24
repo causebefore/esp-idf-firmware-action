@@ -20,6 +20,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
     throw "The token input is empty."
